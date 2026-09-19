@@ -8,34 +8,63 @@ let kHomeURL = URL(string: "https://am-4u2.pages.dev/")!
 struct WrapperApp: App {
     var body: some Scene {
         WindowGroup {
-            WebContainer()
+            ContentView()
                 .ignoresSafeArea(edges: .bottom)
                 .preferredColorScheme(.dark)
         }
     }
 }
 
-struct WebContainer: UIViewRepresentable {
+struct ContentView: View {
+    @State private var statusText: String = "正在加载…"
+    @State private var showStatus: Bool = true
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.black.ignoresSafeArea()
+
+            WebContainer(statusText: $statusText, showStatus: $showStatus)
+
+            if showStatus {
+                Text(statusText)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.75))
+                    .cornerRadius(8)
+                    .padding(.top, 50)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+}
+
+struct WebContainer: UIViewRepresentable {
+    @Binding var statusText: String
+    @Binding var showStatus: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(statusText: $statusText, showStatus: $showStatus)
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true                 // 视频内联播放，不强制全屏
-        config.mediaTypesRequiringUserActionForPlayback = []     // 允许自动播放
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
         config.allowsPictureInPictureMediaPlayback = true
-        config.websiteDataStore = .default()                     // 保留 Cookie / localStorage
+        config.websiteDataStore = .default()
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = true       // 左滑返回
+        webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
 
-        // 下拉刷新
         let refresh = UIRefreshControl()
         refresh.tintColor = .white
         refresh.addTarget(context.coordinator,
@@ -44,7 +73,14 @@ struct WebContainer: UIViewRepresentable {
         webView.scrollView.refreshControl = refresh
         context.coordinator.webView = webView
 
-        webView.load(URLRequest(url: kHomeURL))
+        webView.load(URLRequest(url: kHomeURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData))
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+            if context.coordinator.isLoading {
+                statusText = "加载超过 10 秒仍未完成\n可能是网络较慢或页面被拦截"
+            }
+        }
+
         return webView
     }
 
@@ -52,20 +88,51 @@ struct WebContainer: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         weak var webView: WKWebView?
+        var isLoading = true
+        @Binding var statusText: String
+        @Binding var showStatus: Bool
+
+        init(statusText: Binding<String>, showStatus: Binding<Bool>) {
+            _statusText = statusText
+            _showStatus = showStatus
+        }
 
         @objc func reload(_ sender: UIRefreshControl) {
+            isLoading = true
+            statusText = "正在加载…"
+            showStatus = true
             webView?.reload()
         }
 
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            isLoading = true
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            isLoading = false
             webView.scrollView.refreshControl?.endRefreshing()
+            statusText = "加载完成"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                self.showStatus = false
+            }
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            isLoading = false
             webView.scrollView.refreshControl?.endRefreshing()
+            showStatus = true
+            let nsError = error as NSError
+            statusText = "加载失败：\n\(nsError.localizedDescription)\n(code \(nsError.code))"
         }
 
-        // target="_blank" 的链接在当前 WebView 打开，否则会被吞掉
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            isLoading = false
+            webView.scrollView.refreshControl?.endRefreshing()
+            showStatus = true
+            let nsError = error as NSError
+            statusText = "无法打开页面：\n\(nsError.localizedDescription)\n(domain: \(nsError.domain), code \(nsError.code))"
+        }
+
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
@@ -76,7 +143,6 @@ struct WebContainer: UIViewRepresentable {
             return nil
         }
 
-        // 非 http(s) 的 scheme（微信、支付宝、外部播放器等）交给系统
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -90,7 +156,6 @@ struct WebContainer: UIViewRepresentable {
             decisionHandler(.allow)
         }
 
-        // 网页里的 alert / confirm 不处理的话点了没反应
         func webView(_ webView: WKWebView,
                      runJavaScriptAlertPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo,
