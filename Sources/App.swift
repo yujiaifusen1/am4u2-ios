@@ -56,6 +56,11 @@ struct WebContainer: UIViewRepresentable {
         config.websiteDataStore = .default()
 
         let webView = WKWebView(frame: .zero, configuration: config)
+
+        // 允许用 Mac Safari 远程调试这个网页（iOS 16.4+ 需要显式打开）
+        if #available(iOS 16.4, *) {
+            webView.isInspectable = true
+        }
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
